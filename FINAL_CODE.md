@@ -1,3 +1,6 @@
+# FINAL FIXED CODE - Copy Everything Below This Line
+
+```javascript
 // === Code.gs — FIXED: 10-digit searches (with or without spaces) ===
 //
 // What it does
@@ -419,3 +422,21 @@ function SELF_TEST__LOGGING_ONLY() {
 
   return { status: 'VERIFICATION_LOG_OK', lastRow: lastRow, values: values };
 }
+```
+
+## Key Fixes in This Version:
+
+1. **Handles formatted 10-digit input**: `"2204 1013 00"` works now
+2. **Triple-layer fallback** for 10-digit codes:
+   - Layer 1: `/commodities/{code}` endpoint
+   - Layer 2: Search API with exact match
+   - Layer 3: Heading structure (catches non-declarable codes)
+3. **Supports odd-length prefixes**: 3/5/7/9 digits
+4. **Routes by digit count**, not string format
+
+## Instructions:
+
+1. Copy everything inside the code block (starting from `// === Code.gs` to the last `}`)
+2. Paste it into your Google Apps Script `Code.gs` file
+3. Replace ALL existing code
+4. Save and test
