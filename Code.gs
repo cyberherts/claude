@@ -1,15 +1,16 @@
-// === Code.gs — FIXED (numeric prefix → all 10-digit children) ===
+// === Code.gs — FIXED: 10-digit searches (with or without spaces) ===
 //
 // What it does
-// - 10-digit input: exact commodity (/api/v2/commodities/{code})
-//   WITH FALLBACK to search if exact lookup fails
-// - Numeric prefix (2/4/6/8 digits): first tries /api/v2/chapters or /api/v2/headings
-//   to list all children; if empty, falls back to search (v2 then v1) and filters to 10-digit codes
-//   that start with the prefix.
+// - 10-digit input (even with spaces/dashes): exact commodity (/api/v2/commodities/{code})
+//   + THREE-LAYER FALLBACK:
+//     1) Search API for exact match
+//     2) Heading structure (catches non-declarable codes that 8-digit search finds)
+// - Numeric prefix (2/4/6/8 digits): use chapters/headings → children; fallback to search+filter.
+// - Odd-length numeric (3/5/7/9): search+filter to 10-digit starting with the prefix.
 // - Text input: search (v2 then v1), deduped and sorted (10-digit first).
-// - Returns: { payload: [{ code, description }] } — your frontend can stay the same.
+// - Returns: { payload: [{ code, description }] }.
 //
-// Logging: writes [email, timestamp, keyword] to the first sheet of the spreadsheet below.
+// Logging: writes [email, timestamp, keyword] to the first sheet.
 
 const LOG_SPREADSHEET_ID = '1k9qfmzykhCT6tIi0brl-floJiDeXsWi5wabxhT28imw';
 const LOG_TIMEZONE = 'Europe/London';
@@ -40,34 +41,44 @@ function searchHS(p_search) {
   }
 
   var term = p_search.trim();
-  var digits = term.replace(/\D/g, '');
-  var isNumeric = /^\d+$/.test(term);
+  var digits = term.replace(/\D/g, ''); // <- critical: use this for logic
+  var out = [];
 
   try {
-    var out = [];
+    if (digits.length >= 10) {
+      // Treat anything with 10+ digits as a 10-digit code (first 10)
+      var code10 = digits.slice(0, 10);
+      out = fetchCommodityExact_(code10);
 
-    if (isNumeric) {
-      if (digits.length === 10) {
-        // Exact 10-digit → single commodity (precise details)
-        out = fetchCommodityExact_(digits);
-
-        // FIX: Add fallback to search if exact lookup fails
-        if (out.length === 0) {
-          var raw = fetchSearchRawAll_(term);
-          out = filterPrefixTo10_(raw, digits);
-        }
-      } else {
-        // Numeric prefix (2/4/6/8) → try structure endpoints, then fallback to search
-        out = fetchByNumericPrefix_(digits);
-
-        // If still nothing, try a broad search fallback (rare)
-        if (out.length === 0) {
-          var raw = fetchSearchRawAll_(term);
-          out = filterPrefixTo10_(raw, digits);
-        }
+      // Fallback 1: if commodity endpoint doesn't return, try search and exact-match filter
+      if (out.length === 0) {
+        var raw10 = fetchSearchRawAll_(code10);
+        out = filterExact10_(raw10, code10);
       }
+
+      // Fallback 2: if search doesn't find it, try heading structure (like 8-digit search)
+      // This catches non-declarable codes that exist in the hierarchy but not in commodity endpoint
+      if (out.length === 0) {
+        var prefix8 = code10.slice(0, 8);
+        var rawHeading = fetchByNumericPrefix_(prefix8);
+        out = filterExact10_(rawHeading, code10);
+      }
+
+    } else if ([2, 4, 6, 8].includes(digits.length)) {
+      // Numeric prefix (2/4/6/8)
+      out = fetchByNumericPrefix_(digits);
+      if (out.length === 0) {
+        var rawP = fetchSearchRawAll_(digits);
+        out = filterPrefixTo10_(rawP, digits);
+      }
+
+    } else if (digits.length > 0) {
+      // Odd-length numeric (3/5/7/9) → search+filter to 10-digit children starting with prefix
+      var rawOdd = fetchSearchRawAll_(digits);
+      out = filterPrefixTo10_(rawOdd, digits);
+
     } else {
-      // Keyword mode: v2 then v1 search, deduped
+      // Keyword mode
       var rawText = fetchSearchRawAll_(term);
       out = mapToPayload_(rawText);
     }
@@ -268,6 +279,16 @@ function fetchSearchV1_(term) {
 }
 
 // ---------------- Transform & filter helpers ----------------
+
+/**
+ * Keep exactly one item that equals the 10-digit code, if present.
+ */
+function filterExact10_(rawList, code10) {
+  var out = (rawList || []).filter(function (r) {
+    return r && r.code && String(r.code).trim() === String(code10);
+  });
+  return dedupeAndSort_(out, /*put10First=*/true).map(minify_);
+}
 
 /**
  * Given raw items [{code, description}], keep:
